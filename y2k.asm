@@ -28,10 +28,70 @@
         dc.l    'Y2KF'
         dc.l    0
 xbios_hook:
-        ; we push the fallthrough address on the stack so that we don't have
-        ; to use any registers. Some badly written apps rely on this!
+        ; save used registers because apparently some apps rely on this
+    	move.l	    a0,-(sp)
+
+        bsr.s      get_syscall_params
+
+        cmp.w       #22,(a0)        ; settime
+        beq.s       .settime
+
+        cmp.w       #23,(a0)        ; gettime
+        beq.s       .gettime
+
+.fallthrough
+        ; restore registers
+    	move.l	    (sp)+,a0
+
+    	; fallthrough without using a register
         move.l      (xbios_hook-4)(pc),-(sp)
         rts
+
+.settime
+        ; subtract 40 to the year
+        sub.l       #2<<25,2(a0)
+        bra.s       .fallthrough
+
+.gettime
+        ; restore registers, so we're completely transparent
+    	move.l	    (sp)+,a0
+
+        ; pretend we're doing a gettime call
+	    move.w      #23,-(sp)
+
+	    ; this emulates a "trap" stack frame
+	    move.l      #.return_from_xbios,-(sp)
+	    move.w      sr,-(sp)
+	    tst.w	    $59e.w
+	    beq.s	    .short_stack_frame
+	    clr.w       -(sp)
+.short_stack_frame
+        ; this emulates a jmp without using a register
+        move.l      (xbios_hook-4)(pc),-(sp)
+        rts
+
+.return_from_xbios
+        ; this is where the XBIOS' gettime rte will return to
+        addq.l      #2,sp
+
+        ; add 40 to the year
+        add.l       #2<<25,d0
+
+        ; and we really return to the user
+        rte
+
+
+get_syscall_params:
+	    btst	    #5,8(sp)        ; check if we were called from supervisor
+	    bne.s	    .super          ; yes, use sp
+        move	    usp,a0          ; no, use usp
+        rts
+.super  lea	        (6+8)(sp),a0    ; when using sp, we need to offset for
+	    tst.w	    $59e.w          ; the parameters
+	    beq.s	    .short
+	    addq.l	    #2,a0
+.short  rts
+
 
 ; -----------------------------------------------------------------------------
 ; Init sequence
